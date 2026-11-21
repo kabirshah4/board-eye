@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <title>Board Eye</title>
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Board Eye">
+  <meta name="theme-color" content="#000000">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icon-180.png">
+  <style>
+    :root {
+      --bg: #000;
+      --fg: #f2f2f2;
+      --dim: #8a8a8a;
+      --cyan: #3ef0ff;
+      --green: #2bff6a;
+      --warn: #ffcc33;
+      --panel: rgba(0, 0, 0, 0.72);
+      --mono: ui-monospace, "SF Mono", Menlo, monospace;
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 16px -apple-system, system-ui, sans-serif; overflow: hidden; }
+    /* The whole camera frame stays in view above the controls, so every board corner can be tapped. */
+    #view { position: fixed; top: 0; left: 0; right: 0; bottom: var(--controls, 190px); }
+    body.tapping #view { bottom: 0; }
+    video { width: 100%; height: 100%; object-fit: contain; display: block; }
+    #overlay { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+    body.tapping #bottom, body.tapping #move { display: none; }
+    #guide { position: fixed; left: 16px; right: 16px; top: calc(env(safe-area-inset-top) + 44px); padding: 14px 16px; background: var(--panel); border: 1px solid var(--cyan); border-radius: 10px; color: var(--cyan); font: 600 17px -apple-system, system-ui, sans-serif; text-align: center; line-height: 1.35; pointer-events: none; }
+    #guide b { font: 700 22px var(--mono); display: block; margin-top: 4px; }
+
+    #top { position: fixed; top: env(safe-area-inset-top); left: 0; right: 0; padding: 10px 16px; display: flex; justify-content: space-between; align-items: center; font: 12px var(--mono); }
+    #conn::before { content: "●"; margin-right: 6px; color: var(--warn); }
+    #conn.ok::before { color: var(--green); }
+    #motion { color: var(--dim); }
+
+    #move { position: fixed; left: 16px; right: 16px; top: calc(env(safe-area-inset-top) + 44px); padding: 14px 16px; background: var(--panel); border: 1px solid var(--green); border-radius: 10px; font: 700 26px var(--mono); color: var(--green); text-align: center; letter-spacing: 0.02em; }
+    #move small { display: block; font: 500 12px var(--mono); color: var(--dim); margin-top: 6px; letter-spacing: 0; }
+    #move.reaim { border-color: var(--warn); color: var(--warn); }
+    #move.idle { border-color: #333; color: var(--dim); }
+
+    #bottom { position: fixed; left: 0; right: 0; bottom: 0; padding: 10px 12px calc(env(safe-area-inset-bottom) + 10px); background: var(--panel); }
+    #log { font: 11px/1.45 var(--mono); color: #d8d8d8; height: calc(5 * 1.45em); overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; white-space: nowrap; }
+    .row { display: flex; gap: 8px; margin-top: 10px; }
+    button, input { font: 600 15px -apple-system, system-ui, sans-serif; border-radius: 10px; border: 1px solid #444; background: #1b1b1b; color: var(--fg); padding: 12px 10px; min-height: 46px; }
+    button { flex: 1; }
+    button:active { background: #2a2a2a; }
+    input { flex: 1.4; min-width: 0; font-family: var(--mono); }
+
+    #start { position: fixed; inset: 0; background: var(--bg); display: flex; flex-direction: column; justify-content: center; padding: 24px 16px; gap: 14px; }
+    #start h1 { margin: 0 0 4px; font: 700 30px var(--mono); color: var(--cyan); }
+    #start p { margin: 0 0 10px; color: var(--dim); line-height: 1.4; }
+    .seg { display: flex; gap: 8px; }
+    .seg button[aria-pressed="true"] { border-color: var(--cyan); color: var(--cyan); }
+    #go { background: var(--cyan); color: #000; border: 0; font-size: 18px; min-height: 56px; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <div id="view">
+    <video id="cam" playsinline muted autoplay></video>
+    <canvas id="overlay"></canvas>
+  </div>
+
+  <div id="top"><span id="conn">connecting</span><span id="motion">—</span></div>
+  <div id="move" class="idle">WAITING<small>point the camera at the board</small></div>
+  <div id="guide" hidden></div>
+
+  <div id="bottom">
+    <div id="log"></div>
+    <div class="row">
+      <button id="undo">Undo</button>
+      <button id="read">Read now</button>
+      <button id="recorner">Corners</button>
+      <button id="newgame">New</button>
+    </div>
+    <form class="row" id="setform">
+      <input id="setmove" placeholder="fix a move: e5, Nf3" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <button type="submit">Set</button>
+    </form>
+  </div>
+
+  <div id="start">
+    <h1>Board Eye</h1>
+    <p>Prop the phone on your side of the table so the whole board is in view, then tap its four corners. Put your earbuds in: moves are spoken as they're found.</p>
+    <div class="seg" id="color">
+      <button data-color="white" aria-pressed="true">I'm White</button>
+      <button data-color="black" aria-pressed="false">I'm Black</button>
+    </div>
+    <button id="go">Start</button>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
